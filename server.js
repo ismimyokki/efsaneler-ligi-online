@@ -29,7 +29,7 @@ s.on('create',name=>{leave(s);let r={code:code(),host:s.id,phase:'lobby',budgetL
 s.on('join',({code,name})=>{leave(s);let r=rooms.get(String(code).trim().toUpperCase());if(!r)return err('Oda bulunamadı');if(r.phase!=='lobby'||r.members.length>=4)return err('Oda dolu veya oyun başladı');r.members.push({id:s.id,name:String(name||'Oyuncu').slice(0,25),team:[],slots:{},formation:'4-3-3'});s.join(r.code);s.data.room=r.code;pub(r);});
 s.on('budget',amount=>{let r=rooms.get(s.data.room);if(!r||r.host!==s.id||r.phase!=='lobby')return err('Bütçeyi yalnızca oda sahibi oyun başlamadan değiştirebilir');if(!ALLOWED_BUDGETS.includes(amount))return err('Geçersiz bütçe');r.budgetLimit=amount;pub(r);});
 s.on('start',()=>{let r=rooms.get(s.data.room);if(!r||r.host!==s.id)return;if(r.members.length<2)return err('En az 2 kişi gerekli');r.phase='draft';r.order=r.members.map(m=>m.id);r.turn=0;r.result=null;r.members.forEach(m=>{m.team=[];m.slots={};});pub(r);});
-s.on('formation',f=>{let r=rooms.get(s.data.room),m=r?.members.find(x=>x.id===s.id);if(!m||r.phase!=='lobby'||!Object.hasOwn(FORMATIONS,f))return;m.formation=f;pub(r);});
+s.on('formation',f=>{let r=rooms.get(s.data.room),m=r?.members.find(x=>x.id===s.id);if(!m||!['lobby','draft'].includes(r.phase)||!Object.hasOwn(FORMATIONS,f))return;if(m.team.length)return err('Dizilişi değiştirmek için önce yeni oyuna başla');m.formation=f;m.slots={};pub(r);});
 s.on('pick',data=>{let r=rooms.get(s.data.room);if(!r||r.phase!=='draft'||next(r)!==s.id)return err('Seçim sırası sende değil');let idx=Number(data?.idx),slot=String(data?.slot||''),p=players[idx],m=r.members.find(x=>x.id===s.id);if(!p||r.members.some(x=>x.team.includes(idx)))return err('Oyuncu seçilemiyor');const layouts=FORMATIONS;let allowed=layouts[m.formation||'4-3-3 A'];if(!allowed.includes(slot)||m.slots[slot]!==undefined)return err('Geçersiz veya dolu mevki');let want=slot.replace(/[0-9]/g,''),match=p.role===want||(want==='STP'&&p.pos==='DF'&&p.role==='STP')||(want==='OS'&&p.pos==='OS')||(want==='SF'&&p.pos==='FV'&&p.role==='SF');if(!match)return err('Futbolcu bu mevkide oynayamıyor');if(r.budgetLimit!==null&&m.team.reduce((a,i)=>a+players[i].price,0)+p.price>r.budgetLimit)return err('Bütçe yetersiz');m.team.push(idx);m.slots[slot]=idx;r.log.push(m.name+' → '+p.name+' ('+slot+')');r.turn++;if(r.members.every(x=>x.team.length===11))r.phase='finished';pub(r);});
 function matchStory(a,b){
  const random=Math.random,clamp=(x,lo,hi)=>Math.max(lo,Math.min(hi,x)),pick=arr=>arr[Math.floor(random()*arr.length)];
@@ -60,11 +60,11 @@ function matchStory(a,b){
   if(style==='through'&&random()<.12){stats[side].offsides++;type='offside';text='🚩 '+one.name+' savunma arkasına koştu ancak ofsayt bayrağı kalktı.';possession=opp;}
   else{
    stats[side].boxTouches+=1+Math.floor(random()*3);
-   const defensiveShape=(teams[opp].formation||'').startsWith('4-')?.025:0;
+   const formation=teams[opp].formation||'4-3-3 A';const defensiveShape=formation==='4-3-3 B'?.055:formation==='4-4-2 B'?.045:formation==='4-2-3-1'?.05:formation.startsWith('4-')?.025:formation.startsWith('3-')?-.012:0;
    const pressing=clamp(.22+defensiveShape+(stopper.rating-one.rating)*.014,.10,.46);
    if(random()<pressing){type='block';record(opp,stopper.name).interceptions++;record(opp,stopper.name).tackles++;text='🛡️ '+build+'. '+stopper.name+' araya girdi ve topu kazandı!';possession=opp;}
    else{
-    const chance=clamp(.12+(one.rating-85)*.008+(power(team)-power(teams[opp]))*.006-(keeper.rating-85)*.004-(stopper.rating-85)*.002+(style==='through'?.025:style==='cross'?.012:0),.035,.28);
+    const attackFormation=team.formation||'4-3-3 A';const tactic=attackFormation==='4-3-3 A'&&style==='through'?.023:attackFormation==='4-3-3 B'?-.008:attackFormation.startsWith('4-4-2')&&style==='cross'?.024:attackFormation==='3-4-3'?.014:attackFormation==='4-2-3-1'&&style==='givego'?.02:0;const chance=clamp(.12+(one.rating-85)*.008+(power(team)-power(teams[opp]))*.006-(keeper.rating-85)*.004-(stopper.rating-85)*.002+(style==='through'?.025:style==='cross'?.012:0)+tactic,.035,.28);
     shotXg=Number(chance.toFixed(3));stats[side].shots++;stats[side].xg+=chance;
     record(side,one.name).shots++;if(passer)record(side,passer).chances++;
     const roll=random(),keeperRecord=record(opp,keeper.name);
