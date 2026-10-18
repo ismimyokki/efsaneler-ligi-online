@@ -49,7 +49,7 @@ function matchStory(a,b){
   const tacticalEdge=(teams[possession].formation||'').startsWith('3-')?.01:0;
   if(random()<clamp(.16-tacticalEdge,.08,.2))possession=1-possession;
   stats[possession].possession++;
-  if(random()>.18){timeline.push(snapshot());continue;}
+  if(random()>.18){if(random()<.09){const defending=1-possession,mid=squads[defending].all.filter(p=>p.pos==='OS');if(mid.length){const ballWinner=pick(mid);record(defending,ballWinner.name).tackles++;record(defending,ballWinner.name).interceptions++;if(random()<.32){events.push({minute,type:'midfieldWin',side:defending,team:teams[defending].name,actor:ballWinner.name,partner:ballWinner.name,stopper:ballWinner.name,text:'🛡️ '+ballWinner.name+' orta sahada topu kazandı ve atağı başlattı.'});possession=defending;}}}timeline.push(snapshot());continue;}
   const side=possession,opp=1-side,att=squads[side],def=squads[opp],team=teams[side];
   const one=pick(att.attack.length?att.attack:att.all),options=att.attack.filter(p=>p.name!==one.name),two=pick(options.length?options:att.all.filter(p=>p.name!==one.name));
   const stopper=pick(def.defense.length?def.defense:def.all),keeper=def.keeper;
