@@ -1,0 +1,26 @@
+const express=require('express'),http=require('http'),crypto=require('crypto'),{Server}=require('socket.io');
+const app=express(),server=http.createServer(app),io=new Server(server,{cors:{origin:'*'}});
+const BUDGET=1e9,POSITIONS={KL:1,DF:4,OS:3,FV:3},rooms=new Map();
+const names={
+KL:'Buffon,Casillas,Neuer,Čech,Van der Sar,Alisson,Ederson,Courtois,Oblak,Ter Stegen,Donnarumma,Keylor Navas,Dida,Júlio César,Seaman,Schmeichel,Valdés,Handanović,Lloris,Emiliano Martínez',
+DF:'Maldini,Nesta,Cannavaro,Ramos,Puyol,Piqué,Thiago Silva,Van Dijk,Varane,Chiellini,Bonucci,Godín,Pepe,Marquinhos,Rúben Dias,John Terry,Rio Ferdinand,Vidić,Kompany,Stones,Saliba,William Saliba,Carvajal,Dani Alves,Cafu,Lahm,Marcelo,Roberto Carlos,Ashley Cole,Evra,Walker,Alexander-Arnold,Hakimi,Theo Hernández,Alphonso Davies,Azpilicueta,Alaba,David Luiz,Lucio,Samuel,Barzagli,Stam,Koeman,Desailly,Boateng,Matip,Militão,Araujo,Koundé,Bastoni',
+OS:'Zidane,Iniesta,Xavi,Modrić,Kroos,De Bruyne,Busquets,Pirlo,Vieira,Gerrard,Lampard,Scholes,Seedorf,Gattuso,Kanté,Casemiro,Rodri,Bellingham,Pedri,Gavi,Foden,Bruno Fernandes,Özil,David Silva,David Beckham,Kaká,Deco,Valverde,Barella,Enzo Fernández,Mac Allister,Declan Rice,De Jong,Çalhanoğlu,Gündoğan,Eriksen,Isco,Pogba,Matuidi,Rakitic,Fàbregas,Marchisio,Sneijder,Yaya Touré,Mascherano,Makelele,Di María,Arda Turan,James Rodríguez,Musiala',
+FV:'Messi,Cristiano Ronaldo,Ronaldo Nazário,Henry,Suárez,Lewandowski,Benzema,Mbappé,Haaland,Neymar,Ronaldinho,Salah,Mané,Son Heung-min,Kane,Griezmann,Agüero,Rooney,Ibrahimović,Cavani,Falcao,David Villa,Torres,Drogba,Eto’o,Robben,Ribéry,Bale,Hazard,Alexis Sánchez,Tevez,Van Persie,Bergkamp,Shevchenko,Raúl,Del Piero,Totti,Batistuta,Klose,Müller,Osimhen,Lautaro Martínez,Vinícius Jr,Rodrygo,Saka,Leão,Kvaratskhelia,Dembélé,Yamal,Isak'
+};
+const players=Object.entries(names).flatMap(([pos,list])=>list.split(',').map((name,i)=>({name,pos,rating:Math.max(80,96-Math.floor(i/5)),price:(60+Math.max(0,96-Math.floor(i/5)-80)*11)*1000000})));
+app.use(express.static('public'));app.get('/health',(q,s)=>s.json({ok:true,rooms:rooms.size}));app.get('/api/players',(q,s)=>s.json(players));
+const code=()=>crypto.randomBytes(3).toString('hex').toUpperCase();
+function view(r){return {code:r.code,phase:r.phase,host:r.host,turn:r.turn,order:r.order,members:r.members.map(m=>({id:m.id,name:m.name,team:m.team,budget:BUDGET-m.team.reduce((a,i)=>a+players[i].price,0)})),log:r.log.slice(-30),result:r.result};}
+function pub(r){io.to(r.code).emit('state',view(r));}
+function next(r){let n=r.order.length,k=r.turn;return r.order[Math.floor(k/n)%2===0?k%n:n-1-k%n];}
+function leave(s){let r=rooms.get(s.data.room);if(!r)return;let i=r.members.findIndex(m=>m.id===s.id);if(i<0)return;r.members.splice(i,1);r.order=r.order.filter(id=>id!==s.id);s.leave(r.code);delete s.data.room;if(!r.members.length){rooms.delete(r.code);return;}if(r.host===s.id)r.host=r.members[0].id;if(r.phase==='draft'){r.phase='lobby';r.turn=0;r.order=[];r.members.forEach(m=>m.team=[]);r.log.push('Oyuncu ayrıldı; seçim yeniden başlatılmalı.');}pub(r);}
+io.on('connection',s=>{
+const err=t=>s.emit('errorMsg',t);
+s.on('create',name=>{leave(s);let r={code:code(),host:s.id,phase:'lobby',turn:0,order:[],members:[{id:s.id,name:String(name||'Oyuncu').slice(0,25),team:[]}],log:[],result:null};rooms.set(r.code,r);s.join(r.code);s.data.room=r.code;pub(r);});
+s.on('join',({code,name})=>{leave(s);let r=rooms.get(String(code).trim().toUpperCase());if(!r)return err('Oda bulunamadı');if(r.phase!=='lobby'||r.members.length>=4)return err('Oda dolu veya oyun başladı');r.members.push({id:s.id,name:String(name||'Oyuncu').slice(0,25),team:[]});s.join(r.code);s.data.room=r.code;pub(r);});
+s.on('start',()=>{let r=rooms.get(s.data.room);if(!r||r.host!==s.id)return;if(r.members.length<2)return err('En az 2 kişi gerekli');r.phase='draft';r.order=r.members.map(m=>m.id);r.turn=0;r.result=null;r.members.forEach(m=>m.team=[]);pub(r);});
+s.on('pick',idx=>{let r=rooms.get(s.data.room);if(!r||r.phase!=='draft'||next(r)!==s.id)return err('Seçim sırası sende değil');let p=players[idx],m=r.members.find(x=>x.id===s.id);if(!p||r.members.some(x=>x.team.includes(idx)))return err('Oyuncu seçilemiyor');if(m.team.filter(i=>players[i].pos===p.pos).length>=POSITIONS[p.pos])return err('Bu mevki dolu');if(m.team.reduce((a,i)=>a+players[i].price,0)+p.price>BUDGET)return err('Bütçe yetersiz');m.team.push(idx);r.log.push(m.name+' → '+p.name);r.turn++;if(r.members.every(x=>x.team.length===11))r.phase='finished';pub(r);});
+s.on('simulate',()=>{let r=rooms.get(s.data.room);if(!r||r.phase!=='finished'||r.host!==s.id)return;let teams=r.members.map(m=>({name:m.name,power:m.team.reduce((a,i)=>a+players[i].rating,0)/11}));let matches=[];for(let i=0;i<teams.length;i++)for(let j=i+1;j<teams.length;j++){let a=teams[i],b=teams[j],ga=Math.max(0,Math.round((a.power-b.power)/8+1.6+Math.random()*2-1)),gb=Math.max(0,Math.round((b.power-a.power)/8+1.6+Math.random()*2-1));matches.push({a:a.name,b:b.name,ga,gb});}r.result=matches;pub(r);});
+s.on('disconnect',()=>leave(s));
+});
+server.listen(process.env.PORT||3000,'0.0.0.0');
