@@ -57,7 +57,7 @@ function matchStory(a,b){
  const squads=teams.map(t=>{const all=t.team.map(i=>players[i]);return {all,attack:all.filter(p=>p.pos==='FV'||p.pos==='OS'),defense:all.filter(p=>p.pos==='DF'),keeper:all.find(p=>p.pos==='KL')||all[0]};});
  const performances=squads.map(({all})=>all.map(p=>({name:p.name,pos:p.pos,rating:p.rating,goals:0,assists:0,shots:0,onTarget:0,chances:0,tackles:0,interceptions:0,saves:0,penaltySaves:0,errors:0,goalsConceded:0,cleanSheet:false,matchRating:6.5})));
  const record=(side,name)=>performances[side].find(p=>p.name===name);
- const power=t=>t.team.reduce((sum,i)=>sum+players[i].rating,0)/11;
+ const power=t=>t.team.reduce((sum,i)=>sum+players[i].rating,0)/11;const attackPower=t=>t.team.reduce((sum,i)=>sum+players[i].attack,0)/11;const defensePower=t=>t.team.reduce((sum,i)=>sum+players[i].defense,0)/11;
  const weightedSide=()=>random()<clamp(.5+(power(a)-power(b))*.014,.35,.65)?0:1;
  let possession=weightedSide();
  const snapshot=()=>stats.map(st=>({...st,xg:Number(st.xg.toFixed(2))}));
@@ -81,10 +81,10 @@ function matchStory(a,b){
   else{
    stats[side].boxTouches+=1+Math.floor(random()*3);
    const formation=teams[opp].formation||'4-3-3 A';const defensiveShape=formation==='4-3-3 B'?.055:formation==='4-4-2 B'?.045:formation==='4-2-3-1'?.05:formation.startsWith('4-')?.025:formation.startsWith('3-')?-.012:0;
-   const pressing=clamp(.22+defensiveShape+(stopper.rating-one.rating)*.014,.10,.46);
+   const pressing=clamp(.22+defensiveShape+(stopper.defense-one.attack)*.008+(defensePower(teams[opp])-attackPower(team))*.003,.10,.55);
    if(random()<pressing){type='block';record(opp,stopper.name).interceptions++;record(opp,stopper.name).tackles++;text='🛡️ '+build+'. '+stopper.name+' araya girdi ve topu kazandı!';possession=opp;}
    else{
-    const attackFormation=team.formation||'4-3-3 A';const tactic=attackFormation==='4-3-3 A'&&style==='through'?.023:attackFormation==='4-3-3 B'?-.008:attackFormation.startsWith('4-4-2')&&style==='cross'?.024:attackFormation==='3-4-3'?.014:attackFormation==='4-2-3-1'&&style==='givego'?.02:0;const chance=clamp(.12+(one.rating-85)*.008+(power(team)-power(teams[opp]))*.006-(keeper.rating-85)*.004-(stopper.rating-85)*.002+(style==='through'?.025:style==='cross'?.012:0)+tactic,.035,.28);
+    const attackFormation=team.formation||'4-3-3 A';const tactic=attackFormation==='4-3-3 A'&&style==='through'?.023:attackFormation==='4-3-3 B'?-.008:attackFormation.startsWith('4-4-2')&&style==='cross'?.024:attackFormation==='3-4-3'?.014:attackFormation==='4-2-3-1'&&style==='givego'?.02:0;const chance=clamp(.12+(one.attack-85)*.007+(attackPower(team)-defensePower(teams[opp]))*.003-(keeper.defense-85)*.003-(stopper.defense-85)*.002+(style==='through'?.025:style==='cross'?.012:0)+tactic,.035,.28);
     shotXg=Number(chance.toFixed(3));stats[side].shots++;stats[side].xg+=chance;
     record(side,one.name).shots++;if(passer)record(side,passer).chances++;
     const roll=random(),keeperRecord=record(opp,keeper.name);
