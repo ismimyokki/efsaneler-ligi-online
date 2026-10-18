@@ -43,7 +43,8 @@ function matchStory(a,b){
  for(let minute=1;minute<=90;minute++){
   if(minute===45)events.push({minute,type:'break',text:'İlk yarı tamamlandı.'});
   if(minute===46)events.push({minute,type:'start',text:'İkinci yarı başladı!'});
-  if(random()<.16)possession=1-possession;
+  const tacticalEdge=(teams[possession].formation||'').startsWith('3-')?.01:0;
+  if(random()<Math.max(.08,.16-tacticalEdge))possession=1-possession;
   stats[possession].possession++;
   if(random()<=.17){
    const side=possession,opp=1-side,att=squads[side],def=squads[opp],team=teams[side];
@@ -54,10 +55,11 @@ function matchStory(a,b){
    if(style==='through'&&random()<.13){stats[side].offsides++;type='offside';text='🚩 '+one.name+' savunma arkasına koştu ancak ofsayt bayrağı kalktı.';possession=opp;}
    else{
     stats[side].boxTouches+=1+Math.floor(random()*3);
-    const pressing=Math.max(.10,Math.min(.43,.23+(stopper.rating-one.rating)*.015));
+    const defensiveShape=(teams[opp].formation||'').startsWith('5-')?.05:(teams[opp].formation||'').startsWith('4-')?.025:0;
+    const pressing=Math.max(.10,Math.min(.48,.22+defensiveShape+(stopper.rating-one.rating)*.015));
     if(random()<pressing){type='block';text='🛡️ '+build+'. '+stopper.name+' araya girdi ve topu kazandı!';possession=opp;}
     else{
-     const chance=Math.max(.045,Math.min(.28,.14+(one.rating-85)*.009+(power(team)-power(teams[opp]))*.008-(keeper.rating-85)*.004));
+     const chance=Math.max(.035,Math.min(.28,.12+(one.rating-85)*.008+(power(team)-power(teams[opp]))*.006-(keeper.rating-85)*.004-(stopper.rating-85)*.002+(style==='through'?.025:style==='cross'?.012:0)));
      stats[side].shots++;stats[side].xg+=chance;
      const roll=random();
      if(roll<chance){type='goal';score[side]++;stats[side].onTarget++;text='⚽ GOOOL! '+build+'. '+one.name+' şutunu çekti, top ağlarda!';possession=opp;}
@@ -66,7 +68,7 @@ function matchStory(a,b){
      else{type='wide';text='💨 '+build+'. '+one.name+' şutunu çekti, top auta çıktı.';possession=opp;}
     }
    }
-   events.push({minute,type,team:team.name,side,actor:one.name,partner:two.name,keeper:keeper.name,stopper:stopper.name,style,text,score:[...score]});
+   events.push({minute,type,team:team.name,side,actor:one.name,partner:two.name,keeper:keeper.name,stopper:stopper.name,style,text,score:[...score],phase:type==='offside'?'offside':type==='block'?'interception':'shot',chance:type==='goal'||type==='save'||type==='post'||type==='wide'?Number((stats[side].xg).toFixed(2)):null});
   }
   timeline.push(snapshot());
  }
