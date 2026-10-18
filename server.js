@@ -32,10 +32,13 @@ s.on('start',()=>{let r=rooms.get(s.data.room);if(!r||r.host!==s.id)return;if(r.
 s.on('formation',f=>{let r=rooms.get(s.data.room),m=r?.members.find(x=>x.id===s.id);if(!m||r.phase!=='lobby'||!Object.hasOwn(FORMATIONS,f))return;m.formation=f;pub(r);});
 s.on('pick',data=>{let r=rooms.get(s.data.room);if(!r||r.phase!=='draft'||next(r)!==s.id)return err('Seçim sırası sende değil');let idx=Number(data?.idx),slot=String(data?.slot||''),p=players[idx],m=r.members.find(x=>x.id===s.id);if(!p||r.members.some(x=>x.team.includes(idx)))return err('Oyuncu seçilemiyor');const layouts=FORMATIONS;let allowed=layouts[m.formation||'4-3-3 A'];if(!allowed.includes(slot)||m.slots[slot]!==undefined)return err('Geçersiz veya dolu mevki');let want=slot.replace(/[0-9]/g,''),match=p.role===want||(want==='STP'&&p.pos==='DF'&&p.role==='STP')||(want==='OS'&&p.pos==='OS')||(want==='SF'&&p.pos==='FV'&&p.role==='SF');if(!match)return err('Futbolcu bu mevkide oynayamıyor');if(r.budgetLimit!==null&&m.team.reduce((a,i)=>a+players[i].price,0)+p.price>r.budgetLimit)return err('Bütçe yetersiz');m.team.push(idx);m.slots[slot]=idx;r.log.push(m.name+' → '+p.name+' ('+slot+')');r.turn++;if(r.members.every(x=>x.team.length===11))r.phase='finished';pub(r);});
 function matchStory(a,b){
- const random=Math.random,pick=arr=>arr[Math.floor(random()*arr.length)],teams=[a,b],score=[0,0],events=[],stats=[0,1].map(()=>({possession:0,shots:0,onTarget:0,corners:0,offsides:0,xg:0,boxTouches:0}));
- const squads=teams.map(t=>{const all=t.team.map(i=>players[i]);return {all,attack:all.filter(p=>p.pos==='FV'||p.pos==='OS'),defense:all.filter(p=>p.pos==='DF'),keeper:all.find(p=>p.pos==='KL')||{name:'Kaleci',rating:80}}});
+ const random=Math.random,clamp=(x,lo,hi)=>Math.max(lo,Math.min(hi,x)),pick=arr=>arr[Math.floor(random()*arr.length)];
+ const teams=[a,b],score=[0,0],events=[],stats=[0,1].map(()=>({possession:0,shots:0,onTarget:0,corners:0,offsides:0,xg:0,boxTouches:0}));
+ const squads=teams.map(t=>{const all=t.team.map(i=>players[i]);return {all,attack:all.filter(p=>p.pos==='FV'||p.pos==='OS'),defense:all.filter(p=>p.pos==='DF'),keeper:all.find(p=>p.pos==='KL')||all[0]};});
+ const performances=squads.map(({all})=>all.map(p=>({name:p.name,pos:p.pos,rating:p.rating,goals:0,assists:0,shots:0,onTarget:0,chances:0,tackles:0,interceptions:0,saves:0,penaltySaves:0,errors:0,goalsConceded:0,cleanSheet:false,matchRating:6.5})));
+ const record=(side,name)=>performances[side].find(p=>p.name===name);
  const power=t=>t.team.reduce((sum,i)=>sum+players[i].rating,0)/11;
- const weightedSide=()=>random()<Math.max(.35,Math.min(.65,.5+(power(a)-power(b))*.014))?0:1;
+ const weightedSide=()=>random()<clamp(.5+(power(a)-power(b))*.014,.35,.65)?0:1;
  let possession=weightedSide();
  const snapshot=()=>stats.map(st=>({...st,xg:Number(st.xg.toFixed(2))}));
  const timeline=[snapshot()];
@@ -44,36 +47,55 @@ function matchStory(a,b){
   if(minute===45)events.push({minute,type:'break',text:'İlk yarı tamamlandı.'});
   if(minute===46)events.push({minute,type:'start',text:'İkinci yarı başladı!'});
   const tacticalEdge=(teams[possession].formation||'').startsWith('3-')?.01:0;
-  if(random()<Math.max(.08,.16-tacticalEdge))possession=1-possession;
+  if(random()<clamp(.16-tacticalEdge,.08,.2))possession=1-possession;
   stats[possession].possession++;
-  if(random()<=.17){
-   const side=possession,opp=1-side,att=squads[side],def=squads[opp],team=teams[side];
-   const one=pick(att.attack.length?att.attack:att.all),two=pick(att.attack.filter(p=>p!==one).length?att.attack.filter(p=>p!==one):att.all);
-   const stopper=pick(def.defense.length?def.defense:def.all),keeper=def.keeper;
-   const style=pick(['givego','cross','through','solo']),build=style==='givego'?one.name+' ile '+two.name+' verkaç yaptı':style==='cross'?two.name+' kanattan ortaladı, '+one.name+' topa yükseldi':style==='through'?two.name+' savunma arkasına pas attı, '+one.name+' koşusunu yaptı':one.name+' topu sürerek savunmayı zorladı';
-   let type,text;
-   if(style==='through'&&random()<.13){stats[side].offsides++;type='offside';text='🚩 '+one.name+' savunma arkasına koştu ancak ofsayt bayrağı kalktı.';possession=opp;}
+  if(random()>.18){timeline.push(snapshot());continue;}
+  const side=possession,opp=1-side,att=squads[side],def=squads[opp],team=teams[side];
+  const one=pick(att.attack.length?att.attack:att.all),options=att.attack.filter(p=>p.name!==one.name),two=pick(options.length?options:att.all.filter(p=>p.name!==one.name));
+  const stopper=pick(def.defense.length?def.defense:def.all),keeper=def.keeper;
+  const style=pick(['givego','cross','through','solo']);
+  const build=style==='givego'?one.name+' ile '+two.name+' verkaç yaptı':style==='cross'?two.name+' kanattan ortaladı, '+one.name+' topa yükseldi':style==='through'?two.name+' savunma arkasına pas attı, '+one.name+' koşusunu yaptı':one.name+' topu sürerek savunmayı zorladı';
+  const passer=style==='solo'?null:two.name;
+  let type,text,shotXg=null;
+  if(style==='through'&&random()<.12){stats[side].offsides++;type='offside';text='🚩 '+one.name+' savunma arkasına koştu ancak ofsayt bayrağı kalktı.';possession=opp;}
+  else{
+   stats[side].boxTouches+=1+Math.floor(random()*3);
+   const defensiveShape=(teams[opp].formation||'').startsWith('4-')?.025:0;
+   const pressing=clamp(.22+defensiveShape+(stopper.rating-one.rating)*.014,.10,.46);
+   if(random()<pressing){type='block';record(opp,stopper.name).interceptions++;record(opp,stopper.name).tackles++;text='🛡️ '+build+'. '+stopper.name+' araya girdi ve topu kazandı!';possession=opp;}
    else{
-    stats[side].boxTouches+=1+Math.floor(random()*3);
-    const defensiveShape=(teams[opp].formation||'').startsWith('5-')?.05:(teams[opp].formation||'').startsWith('4-')?.025:0;
-    const pressing=Math.max(.10,Math.min(.48,.22+defensiveShape+(stopper.rating-one.rating)*.015));
-    if(random()<pressing){type='block';text='🛡️ '+build+'. '+stopper.name+' araya girdi ve topu kazandı!';possession=opp;}
-    else{
-     const chance=Math.max(.035,Math.min(.28,.12+(one.rating-85)*.008+(power(team)-power(teams[opp]))*.006-(keeper.rating-85)*.004-(stopper.rating-85)*.002+(style==='through'?.025:style==='cross'?.012:0)));
-     stats[side].shots++;stats[side].xg+=chance;
-     const roll=random();
-     if(roll<chance){type='goal';score[side]++;stats[side].onTarget++;text='⚽ GOOOL! '+build+'. '+one.name+' şutunu çekti, top ağlarda!';possession=opp;}
-     else if(roll<chance+.37){type='save';stats[side].onTarget++;text='🧤 '+build+'. '+one.name+' vurdu, '+keeper.name+' kurtardı!';if(random()<.32){stats[side].corners++;text+=' Korner!';}possession=opp;}
-     else if(roll<chance+.48){type='post';text='🥅 '+build+'. '+one.name+' vurdu, top direkten döndü!';}
-     else{type='wide';text='💨 '+build+'. '+one.name+' şutunu çekti, top auta çıktı.';possession=opp;}
-    }
+    const chance=clamp(.12+(one.rating-85)*.008+(power(team)-power(teams[opp]))*.006-(keeper.rating-85)*.004-(stopper.rating-85)*.002+(style==='through'?.025:style==='cross'?.012:0),.035,.28);
+    shotXg=Number(chance.toFixed(3));stats[side].shots++;stats[side].xg+=chance;
+    record(side,one.name).shots++;if(passer)record(side,passer).chances++;
+    const roll=random(),keeperRecord=record(opp,keeper.name);
+    if(roll<chance){type='goal';score[side]++;stats[side].onTarget++;record(side,one.name).goals++;record(side,one.name).onTarget++;if(passer)record(side,passer).assists++;keeperRecord.goalsConceded++;if(random()<clamp((88-keeper.rating)*.025+.055,.015,.18)){keeperRecord.errors++;}text='⚽ GOOOL! '+build+'. '+one.name+' şutunu çekti, top ağlarda!';possession=opp;}
+    else if(roll<chance+.37){type='save';stats[side].onTarget++;record(side,one.name).onTarget++;keeperRecord.saves++;text='🧤 '+build+'. '+one.name+' vurdu, '+keeper.name+' kurtardı!';if(random()<.32){stats[side].corners++;text+=' Korner!';}possession=opp;}
+    else if(roll<chance+.48){type='post';text='🥅 '+build+'. '+one.name+' vurdu, top direkten döndü!';}
+    else{type='wide';text='💨 '+build+'. '+one.name+' şutunu çekti, top auta çıktı.';possession=opp;}
    }
-   events.push({minute,type,team:team.name,side,actor:one.name,partner:two.name,keeper:keeper.name,stopper:stopper.name,style,text,score:[...score],phase:type==='offside'?'offside':type==='block'?'interception':'shot',chance:type==='goal'||type==='save'||type==='post'||type==='wide'?Number((stats[side].xg).toFixed(2)):null});
   }
+  events.push({minute,type,team:team.name,side,actor:one.name,partner:two.name,keeper:keeper.name,stopper:stopper.name,style,text,score:[...score],shotXg});
   timeline.push(snapshot());
  }
+ // A rare penalty incident is generated as a real event and contributes to the match totals.
+ if(random()<.17){const minute=75+Math.floor(random()*15),side=weightedSide(),opp=1-side,att=squads[side],def=squads[opp],shooter=pick(att.attack.length?att.attack:att.all),keeper=def.keeper,keeperRecord=record(opp,keeper.name),chance=.76;stats[side].shots++;stats[side].onTarget++;stats[side].xg+=chance;record(side,shooter.name).shots++;record(side,shooter.name).onTarget++;let type,text;if(random()<clamp(.13+(keeper.rating-85)*.008,.09,.22)){type='penaltySave';keeperRecord.saves++;keeperRecord.penaltySaves++;text='🧤 PENALTI KURTARIŞI! '+keeper.name+', '+shooter.name+' karşısında gole izin vermedi!';}else{type='penaltyGoal';score[side]++;record(side,shooter.name).goals++;keeperRecord.goalsConceded++;text='⚽ PENALTI GOLÜ! '+shooter.name+' penaltıyı gole çevirdi.';}events.push({minute,type,team:teams[side].name,side,actor:shooter.name,partner:shooter.name,keeper:keeper.name,stopper:keeper.name,style:'penalty',text,score:[...score],shotXg:chance});}
+ for(let side=0;side<2;side++)for(const p of performances[side]){
+  p.cleanSheet=score[1-side]===0;
+  const quality=(p.rating-85)*.018;
+  let mark=6.4+quality+p.goals*1.55+p.assists*.85+p.chances*.10+p.tackles*.16+p.interceptions*.14+p.saves*.22+p.penaltySaves*1.65-p.errors*1.6;
+  if(p.pos==='KL')mark+=p.cleanSheet?.65:-(p.goalsConceded*.42);
+  else if(p.pos==='DF')mark+=p.cleanSheet?.35:-(score[1-side]*.12);
+  if(p.pos==='FV'||p.pos==='OS')mark+=p.onTarget*.12-p.shots*.035;
+  p.matchRating=Number(clamp(mark,3,10).toFixed(1));
+ }
+ const allRatings=performances.flatMap((team,side)=>team.map(p=>({...p,side})));
+ allRatings.sort((x,y)=>y.matchRating-x.matchRating||y.goals-x.goals||y.assists-x.assists||y.tackles-x.tackles);
+ const playerOfMatch=allRatings[0];
+ events.sort((x,y)=>x.minute-y.minute||(x.type==='end'?1:0)-(y.type==='end'?1:0));
+ // Reconstruct chronological score after inserting a possible penalty.
+ const running=[0,0];for(const e of events){if(e.type==='goal'||e.type==='penaltyGoal')running[e.side]++;if(e.score)e.score=[...running];}
  events.push({minute:90,type:'end',text:'🏁 Maç sona erdi!',score:[...score]});
- return {a:a.name,b:b.name,lineups:[{name:a.name,slots:a.slots,formation:a.formation},{name:b.name,slots:b.slots,formation:b.formation}],events,stats:stats.map(st=>({...st,xg:Number(st.xg.toFixed(2))})),statsTimeline:timeline,finalScore:[...score]};
+ return {a:a.name,b:b.name,lineups:[{name:a.name,slots:a.slots,formation:a.formation},{name:b.name,slots:b.slots,formation:b.formation}],events,stats:stats.map(st=>({...st,xg:Number(st.xg.toFixed(2))})),statsTimeline:timeline,performances,playerOfMatch,finalScore:[...score]};
 }
 s.on('simulate',()=>{let r=rooms.get(s.data.room);if(!r||r.phase!=='finished'||r.host!==s.id)return;let teams=r.members.map(m=>({name:m.name,team:m.team,slots:m.slots,formation:m.formation,power:m.team.reduce((a,i)=>a+players[i].rating,0)/11}));let matches=[];for(let i=0;i<teams.length;i++)for(let j=i+1;j<teams.length;j++)matches.push(matchStory(teams[i],teams[j]));r.result=matches;pub(r);});
 s.on('disconnect',()=>leave(s));
