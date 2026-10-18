@@ -1,5 +1,6 @@
 const express=require('express'),http=require('http'),crypto=require('crypto'),{Server}=require('socket.io');
 const app=express(),server=http.createServer(app),io=new Server(server,{cors:{origin:'*'}});
+const FORMATIONS={"4-3-3 A":["KL","SLB","STP1","STP2","SĞB","OS1","OS2","OS3","SLK","SF","SĞK"],"4-3-3 B":["KL","SLB","STP1","STP2","SĞB","OS1","OS2","OS3","SLK","SF","SĞK"],"4-4-2 A":["KL","SLB","STP1","STP2","SĞB","SLK","OS1","OS2","SĞK","SF1","SF2"],"4-4-2 B":["KL","SLB","STP1","STP2","SĞB","SLK","OS1","OS2","SĞK","SF1","SF2"],"3-4-3":["KL","STP1","STP2","STP3","SLK","OS1","OS2","SĞK","SF1","SF2","SF3"],"3-5-2":["KL","STP1","STP2","STP3","SLK","OS1","OS2","OS3","SĞK","SF1","SF2"],"3-4-1-2":["KL","STP1","STP2","STP3","SLK","OS1","OS2","SĞK","OS3","SF1","SF2"],"4-1-3-2":["KL","SLB","STP1","STP2","SĞB","OS1","SLK","OS2","SĞK","SF1","SF2"],"4-2-3-1":["KL","SLB","STP1","STP2","SĞB","OS1","OS2","SLK","OS3","SĞK","SF"]};
 const DEFAULT_BUDGET=1e9,ALLOWED_BUDGETS=[1e9,2e9,5e9,null],rooms=new Map();
 const names={
 KL:'Buffon,Casillas,Neuer,Čech,Van der Sar,Alisson,Ederson,Courtois,Oblak,Ter Stegen,Donnarumma,Keylor Navas,Dida,Júlio César,Seaman,Schmeichel,Valdés,Handanović,Lloris,Emiliano Martínez',
@@ -24,44 +25,53 @@ function next(r){let n=r.order.length,k=r.turn;return r.order[Math.floor(k/n)%2=
 function leave(s){let r=rooms.get(s.data.room);if(!r)return;let i=r.members.findIndex(m=>m.id===s.id);if(i<0)return;r.members.splice(i,1);r.order=r.order.filter(id=>id!==s.id);s.leave(r.code);delete s.data.room;if(!r.members.length){rooms.delete(r.code);return;}if(r.host===s.id)r.host=r.members[0].id;if(r.phase==='draft'){r.phase='lobby';r.turn=0;r.order=[];r.members.forEach(m=>{m.team=[];m.slots={};});r.log.push('Oyuncu ayrıldı; seçim yeniden başlatılmalı.');}pub(r);}
 io.on('connection',s=>{
 const err=t=>s.emit('errorMsg',t);
-s.on('create',name=>{leave(s);let r={code:code(),host:s.id,phase:'lobby',budgetLimit:DEFAULT_BUDGET,turn:0,order:[],members:[{id:s.id,name:String(name||'Oyuncu').slice(0,25),team:[],slots:{},formation:'4-3-3'}],log:[],result:null};rooms.set(r.code,r);s.join(r.code);s.data.room=r.code;pub(r);});
+s.on('create',name=>{leave(s);let r={code:code(),host:s.id,phase:'lobby',budgetLimit:DEFAULT_BUDGET,turn:0,order:[],members:[{id:s.id,name:String(name||'Oyuncu').slice(0,25),team:[],slots:{},formation:'4-3-3 A'}],log:[],result:null};rooms.set(r.code,r);s.join(r.code);s.data.room=r.code;pub(r);});
 s.on('join',({code,name})=>{leave(s);let r=rooms.get(String(code).trim().toUpperCase());if(!r)return err('Oda bulunamadı');if(r.phase!=='lobby'||r.members.length>=4)return err('Oda dolu veya oyun başladı');r.members.push({id:s.id,name:String(name||'Oyuncu').slice(0,25),team:[],slots:{},formation:'4-3-3'});s.join(r.code);s.data.room=r.code;pub(r);});
 s.on('budget',amount=>{let r=rooms.get(s.data.room);if(!r||r.host!==s.id||r.phase!=='lobby')return err('Bütçeyi yalnızca oda sahibi oyun başlamadan değiştirebilir');if(!ALLOWED_BUDGETS.includes(amount))return err('Geçersiz bütçe');r.budgetLimit=amount;pub(r);});
-s.on('start',()=>{let r=rooms.get(s.data.room);if(!r||r.host!==s.id)return;if(r.members.length<2)return err('En az 2 kişi gerekli');r.phase='draft';r.order=r.members.map(m=>m.id);r.turn=0;r.result=null;r.members.forEach(m=>m.team=[]);pub(r);});
-s.on('formation',f=>{let r=rooms.get(s.data.room),m=r?.members.find(x=>x.id===s.id);if(!m||r.phase!=='lobby'||!['4-3-3','4-4-2','4-2-3-1'].includes(f))return;m.formation=f;pub(r);});
-s.on('pick',data=>{let r=rooms.get(s.data.room);if(!r||r.phase!=='draft'||next(r)!==s.id)return err('Seçim sırası sende değil');let idx=Number(data?.idx),slot=String(data?.slot||''),p=players[idx],m=r.members.find(x=>x.id===s.id);if(!p||r.members.some(x=>x.team.includes(idx)))return err('Oyuncu seçilemiyor');const layouts={'4-3-3':['KL','SLB','STP1','STP2','SĞB','OS1','OS2','OS3','SLK','SF','SĞK'],'4-4-2':['KL','SLB','STP1','STP2','SĞB','SLK','OS1','OS2','SĞK','SF1','SF2'],'4-2-3-1':['KL','SLB','STP1','STP2','SĞB','OS1','OS2','SLK','OS3','SĞK','SF']};let allowed=layouts[m.formation||'4-3-3'];if(!allowed.includes(slot)||m.slots[slot]!==undefined)return err('Geçersiz veya dolu mevki');let want=slot.replace(/[0-9]/g,''),match=p.role===want||(want==='STP'&&p.pos==='DF'&&p.role==='STP')||(want==='OS'&&p.pos==='OS')||(want==='SF'&&p.pos==='FV'&&p.role==='SF');if(!match)return err('Futbolcu bu mevkide oynayamıyor');if(r.budgetLimit!==null&&m.team.reduce((a,i)=>a+players[i].price,0)+p.price>r.budgetLimit)return err('Bütçe yetersiz');m.team.push(idx);m.slots[slot]=idx;r.log.push(m.name+' → '+p.name+' ('+slot+')');r.turn++;if(r.members.every(x=>x.team.length===11))r.phase='finished';pub(r);});
+s.on('start',()=>{let r=rooms.get(s.data.room);if(!r||r.host!==s.id)return;if(r.members.length<2)return err('En az 2 kişi gerekli');r.phase='draft';r.order=r.members.map(m=>m.id);r.turn=0;r.result=null;r.members.forEach(m=>{m.team=[];m.slots={};});pub(r);});
+s.on('formation',f=>{let r=rooms.get(s.data.room),m=r?.members.find(x=>x.id===s.id);if(!m||r.phase!=='lobby'||!Object.hasOwn(FORMATIONS,f))return;m.formation=f;pub(r);});
+s.on('pick',data=>{let r=rooms.get(s.data.room);if(!r||r.phase!=='draft'||next(r)!==s.id)return err('Seçim sırası sende değil');let idx=Number(data?.idx),slot=String(data?.slot||''),p=players[idx],m=r.members.find(x=>x.id===s.id);if(!p||r.members.some(x=>x.team.includes(idx)))return err('Oyuncu seçilemiyor');const layouts=FORMATIONS;let allowed=layouts[m.formation||'4-3-3 A'];if(!allowed.includes(slot)||m.slots[slot]!==undefined)return err('Geçersiz veya dolu mevki');let want=slot.replace(/[0-9]/g,''),match=p.role===want||(want==='STP'&&p.pos==='DF'&&p.role==='STP')||(want==='OS'&&p.pos==='OS')||(want==='SF'&&p.pos==='FV'&&p.role==='SF');if(!match)return err('Futbolcu bu mevkide oynayamıyor');if(r.budgetLimit!==null&&m.team.reduce((a,i)=>a+players[i].price,0)+p.price>r.budgetLimit)return err('Bütçe yetersiz');m.team.push(idx);m.slots[slot]=idx;r.log.push(m.name+' → '+p.name+' ('+slot+')');r.turn++;if(r.members.every(x=>x.team.length===11))r.phase='finished';pub(r);});
 function matchStory(a,b){
- const random=Math.random,pick=arr=>arr[Math.floor(random()*arr.length)],teams=[a,b],score=[0,0],events=[];
+ const random=Math.random,pick=arr=>arr[Math.floor(random()*arr.length)],teams=[a,b],score=[0,0],events=[],stats=[0,1].map(()=>({possession:0,shots:0,onTarget:0,corners:0,offsides:0,xg:0,boxTouches:0}));
  const squads=teams.map(t=>{const all=t.team.map(i=>players[i]);return {all,attack:all.filter(p=>p.pos==='FV'||p.pos==='OS'),defense:all.filter(p=>p.pos==='DF'),keeper:all.find(p=>p.pos==='KL')||{name:'Kaleci',rating:80}}});
  const power=t=>t.team.reduce((sum,i)=>sum+players[i].rating,0)/11;
  const weightedSide=()=>random()<Math.max(.35,Math.min(.65,.5+(power(a)-power(b))*.014))?0:1;
  let possession=weightedSide();
+ const snapshot=()=>stats.map(st=>({...st,xg:Number(st.xg.toFixed(2))}));
+ const timeline=[snapshot()];
  events.push({minute:1,type:'start',text:'Hakem düdüğü çaldı, karşılaşma başladı!'});
- for(let minute=2;minute<=90;minute++){
-  if(minute===45)events.push({minute,type:'break',text:'İlk yarının sonuna geliyoruz.'});
+ for(let minute=1;minute<=90;minute++){
+  if(minute===45)events.push({minute,type:'break',text:'İlk yarı tamamlandı.'});
   if(minute===46)events.push({minute,type:'start',text:'İkinci yarı başladı!'});
   if(random()<.16)possession=1-possession;
-  if(random()>.17)continue;
-  const side=possession,opp=1-side,att=squads[side],def=squads[opp],team=teams[side];
-  const one=pick(att.attack.length?att.attack:att.all),two=pick(att.attack.filter(p=>p!==one).length?att.attack.filter(p=>p!==one):att.all);
-  const stopper=pick(def.defense.length?def.defense:def.all),keeper=def.keeper;
-  const style=pick(['givego','cross','through','solo']),build=style==='givego'?one.name+' ile '+two.name+' verkaç yaptı':style==='cross'?two.name+' kanattan ortaladı, '+one.name+' topa yükseldi':style==='through'?two.name+' savunma arkasına pas attı, '+one.name+' koşusunu yaptı':one.name+' topu sürerek savunmayı zorladı';
-  const pressing=Math.max(.10,Math.min(.43,.23+(stopper.rating-one.rating)*.015));
-  const blocked=random()<pressing;
-  let type,text,goal=false;
-  if(blocked){type='block';text='🛡️ '+build+'. '+stopper.name+' araya girdi ve topu kazandı!';possession=opp;}
-  else {
-   const shotQuality=Math.max(.045,Math.min(.28,.14+(one.rating-85)*.009+(power(team)-power(teams[opp]))*.008-(keeper.rating-85)*.004));
-   const roll=random();
-   if(roll<shotQuality){type='goal';goal=true;score[side]++;text='⚽ GOOOL! '+build+'. '+one.name+' şutunu çekti, top ağlarda!';possession=opp;}
-   else if(roll<shotQuality+.37){type='save';text='🧤 '+build+'. '+one.name+' vurdu, '+keeper.name+' kurtardı!';possession=opp;}
-   else if(roll<shotQuality+.48){type='post';text='🥅 '+build+'. '+one.name+' vurdu, top direkten döndü!';}
-   else {type='wide';text='💨 '+build+'. '+one.name+' şutunu çekti, top auta çıktı.';possession=opp;}
+  stats[possession].possession++;
+  if(random()<=.17){
+   const side=possession,opp=1-side,att=squads[side],def=squads[opp],team=teams[side];
+   const one=pick(att.attack.length?att.attack:att.all),two=pick(att.attack.filter(p=>p!==one).length?att.attack.filter(p=>p!==one):att.all);
+   const stopper=pick(def.defense.length?def.defense:def.all),keeper=def.keeper;
+   const style=pick(['givego','cross','through','solo']),build=style==='givego'?one.name+' ile '+two.name+' verkaç yaptı':style==='cross'?two.name+' kanattan ortaladı, '+one.name+' topa yükseldi':style==='through'?two.name+' savunma arkasına pas attı, '+one.name+' koşusunu yaptı':one.name+' topu sürerek savunmayı zorladı';
+   let type,text;
+   if(style==='through'&&random()<.13){stats[side].offsides++;type='offside';text='🚩 '+one.name+' savunma arkasına koştu ancak ofsayt bayrağı kalktı.';possession=opp;}
+   else{
+    stats[side].boxTouches+=1+Math.floor(random()*3);
+    const pressing=Math.max(.10,Math.min(.43,.23+(stopper.rating-one.rating)*.015));
+    if(random()<pressing){type='block';text='🛡️ '+build+'. '+stopper.name+' araya girdi ve topu kazandı!';possession=opp;}
+    else{
+     const chance=Math.max(.045,Math.min(.28,.14+(one.rating-85)*.009+(power(team)-power(teams[opp]))*.008-(keeper.rating-85)*.004));
+     stats[side].shots++;stats[side].xg+=chance;
+     const roll=random();
+     if(roll<chance){type='goal';score[side]++;stats[side].onTarget++;text='⚽ GOOOL! '+build+'. '+one.name+' şutunu çekti, top ağlarda!';possession=opp;}
+     else if(roll<chance+.37){type='save';stats[side].onTarget++;text='🧤 '+build+'. '+one.name+' vurdu, '+keeper.name+' kurtardı!';if(random()<.32){stats[side].corners++;text+=' Korner!';}possession=opp;}
+     else if(roll<chance+.48){type='post';text='🥅 '+build+'. '+one.name+' vurdu, top direkten döndü!';}
+     else{type='wide';text='💨 '+build+'. '+one.name+' şutunu çekti, top auta çıktı.';possession=opp;}
+    }
+   }
+   events.push({minute,type,team:team.name,side,actor:one.name,partner:two.name,keeper:keeper.name,stopper:stopper.name,style,text,score:[...score]});
   }
-  events.push({minute,type,team:team.name,side,actor:one.name,partner:two.name,keeper:keeper.name,stopper:stopper.name,style,text,score:[...score]});
+  timeline.push(snapshot());
  }
  events.push({minute:90,type:'end',text:'🏁 Maç sona erdi!',score:[...score]});
- return {a:a.name,b:b.name,lineups:[{name:a.name,slots:a.slots,formation:a.formation},{name:b.name,slots:b.slots,formation:b.formation}],events,finalScore:[...score]};
+ return {a:a.name,b:b.name,lineups:[{name:a.name,slots:a.slots,formation:a.formation},{name:b.name,slots:b.slots,formation:b.formation}],events,stats:stats.map(st=>({...st,xg:Number(st.xg.toFixed(2))})),statsTimeline:timeline,finalScore:[...score]};
 }
 s.on('simulate',()=>{let r=rooms.get(s.data.room);if(!r||r.phase!=='finished'||r.host!==s.id)return;let teams=r.members.map(m=>({name:m.name,team:m.team,slots:m.slots,formation:m.formation,power:m.team.reduce((a,i)=>a+players[i].rating,0)/11}));let matches=[];for(let i=0;i<teams.length;i++)for(let j=i+1;j<teams.length;j++)matches.push(matchStory(teams[i],teams[j]));r.result=matches;pub(r);});
 s.on('disconnect',()=>leave(s));
